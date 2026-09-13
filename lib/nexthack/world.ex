@@ -105,6 +105,12 @@ defmodule Nexthack.World do
   end
 
   @impl true
+  def handle_cast({:register_player, player_pid}, state) do
+    new_state = %{state | player_pid: player_pid}
+    {:noreply, new_state}
+  end
+
+  @impl true
   def handle_cast({:spawn_monsters, count_by_type, caller}, state) do
     if state.player_pid do
       # Spawn monsters of different types
