@@ -6,6 +6,7 @@ defmodule Nexthack.World do
   
   use GenServer
   alias Nexthack.Message
+  alias Nexthack.Trap
 
   # World state
   defstruct [
@@ -38,6 +39,20 @@ defmodule Nexthack.World do
   """
   def spawn_monsters(pid, count_by_type) do
     GenServer.cast(pid, {:spawn_monsters, count_by_type, self()})
+  end
+
+  @doc """
+  Place traps in the world
+  """
+  def place_traps(pid, count) do
+    GenServer.cast(pid, {:place_traps, count, self()})
+  end
+
+  @doc """
+  Check for traps at a position
+  """
+  def check_traps_at_position(pid, pos, entity_pid) do
+    GenServer.cast(pid, {:check_traps_at_position, pos, entity_pid, self()})
   end
 
   @doc """
@@ -151,6 +166,55 @@ defmodule Nexthack.World do
     else
       {:noreply, state}
     end
+  end
+
+  @impl true
+  def handle_cast({:place_traps, count, caller}, state) do
+    if state.map do
+      # Find empty floor positions for traps
+      floor_positions = for y <- 0..23, x <- 0..79, into: [], do: {x, y}
+      |> Enum.filter(fn {x, y} ->
+        tile = state.map |> Enum.at(y) |> Enum.at(x)
+        tile == 0  # Empty floor
+      end)
+      
+      # Place random traps
+      trap_count = min(count, length(floor_positions))
+      traps_placed = []
+      
+      Enum.take_random(floor_positions, trap_count)
+      |> Enum.each(fn pos ->
+        trap_pid = Trap.TrapFactory.create_random_trap(pos, self())
+        traps_placed = [trap_pid | traps_placed]
+      end)
+      
+      new_state = %{state | trap_actors: traps_placed}
+      
+      # Broadcast trap placement
+      Message.Broadcast.broadcast(%{
+        type: :broadcast,
+        message: "Placed #{trap_count} traps",
+        source: "world"
+      }, self())
+      
+      {:noreply, new_state}
+    else
+      {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_cast({:check_traps_at_position, pos, entity_pid, caller}, state) do
+    # Check if there are any traps at this position
+    Enum.each(state.trap_actors, fn trap_pid ->
+      trap_pos = Trap.get_position(trap_pid)
+      if trap_pos == pos and not Trap.triggered?(trap_pid) and not Trap.disarmed?(trap_pid) do
+        # Trigger the trap
+        Trap.trigger(trap_pid, entity_pid)
+      end
+    end)
+    
+    {:noreply, state}
   end
 
   @impl true
@@ -327,6 +391,9 @@ defmodule Nexthack.World do
       
       # Spawn monsters
       Nexthack.World.spawn_monsters(world_pid, goblins: 4, orcs: 2, bats: 3)
+      
+      # Place traps
+      Nexthack.World.place_traps(world_pid, 10)
       
       {world_pid, player_pid}
     end
