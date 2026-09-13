@@ -122,10 +122,11 @@ defmodule Nexthack.Zap do
     if state.distance_travelled >= state.range do
       state
     else
-      # Calculate next position
+      # Calculate next position using pattern matching
+      {current_x, current_y} = state.current_pos
       {dx, dy} = state.direction
-      new_x = state.current_pos |> elem(0) + dx
-      new_y = state.current_pos |> elem(1) + dy
+      new_x = current_x + dx
+      new_y = current_y + dy
       new_pos = {new_x, new_y}
       
       new_distance = state.distance_travelled + 1
