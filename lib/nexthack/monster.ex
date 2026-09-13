@@ -253,7 +253,9 @@ defmodule Nexthack.Monster do
       end)
       |> case do
         {dx, dy} -> 
-          new_pos = {(state.pos |> elem(0) + dx), (state.pos |> elem(1) + dy)}
+          # Use pattern matching instead of pipe operator with elem()
+          {current_x, current_y} = state.pos
+          new_pos = {current_x + dx, current_y + dy}
           new_state = %{state | pos: new_pos}
           
           # Broadcast move
@@ -269,8 +271,10 @@ defmodule Nexthack.Monster do
   end
 
   defp valid_move?(state, dx, dy) do
-    new_x = state.pos |> elem(0) + dx
-    new_y = state.pos |> elem(1) + dy
+    # Use pattern matching instead of pipe operator with elem()
+    {current_x, current_y} = state.pos
+    new_x = current_x + dx
+    new_y = current_y + dy
     
     # Simple validation - in future would check world map
     new_x >= 0 and new_x < 80 and new_y >= 0 and new_y < 24
