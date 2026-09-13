@@ -67,7 +67,8 @@ defmodule Nexthack.Player do
 
   @doc """
   Apply status effect to the player
-  """\n  def apply_status(pid, effect, duration) do
+  """
+  def apply_status(pid, effect, duration) do
     GenServer.cast(pid, {:apply_status, effect, duration, self()})
   end
 
@@ -80,25 +81,29 @@ defmodule Nexthack.Player do
 
   @doc """
   Get player HP
-  """\n  def get_hp(pid) do
+  """
+  def get_hp(pid) do
     GenServer.call(pid, :get_hp)
   end
 
   @doc """
   Check if player is alive
-  """\n  def alive?(pid) do
+  """
+  def alive?(pid) do
     GenServer.call(pid, :alive?)
   end
 
   @doc """
   Get player name
-  """\n  def get_name(pid) do
+  """
+  def get_name(pid) do
     GenServer.call(pid, :get_name)
   end
 
   @doc """
   Check and trigger traps at player's position
-  """\n  def check_and_trigger_traps(pid) do
+  """
+  def check_and_trigger_traps(pid) do
     GenServer.cast(pid, {:check_and_trigger_traps, self()})
   end
 
@@ -120,7 +125,8 @@ defmodule Nexthack.Player do
 
   @doc """
   Check if player can polymorph
-  """\n  def can_polymorph(%{is_golem: true}), do: false
+  """
+  def can_polymorph(%{is_golem: true}), do: false
   def can_polymorph(_player), do: true
 
   # GenServer callbacks
@@ -212,6 +218,60 @@ defmodule Nexthack.Player do
       Process.send_after(self(), {:wake_up_check}, 100)
       {:noreply, state}
     end
+  end
+
+  @impl true
+  def handle_info({:attack, attack_msg}, state) do
+    # Handle attack messages from traps
+    damage_type = attack_msg.damage_type
+    power = attack_msg.power
+    
+    new_state = react_to_damage(state, damage_type, power)
+    {:noreply, new_state}
+  end
+
+  @impl true
+  def handle_info({:status_effect, status_msg}, state) do
+    # Handle status effect messages from traps
+    effect = status_msg.effect
+    duration = status_msg.duration
+    
+    new_state = apply_status_effect(state, effect, duration)
+    {:noreply, new_state}
+  end
+
+  @impl true
+  def handle_info({:teleport, teleport_msg}, state) do
+    # Handle teleportation messages from traps
+    new_pos = teleport_msg.new_pos
+    
+    new_state = %{state | pos: new_pos}
+    
+    # Broadcast teleport
+    if new_state.world_pid do
+      Message.Broadcast.broadcast(%{
+        type: :broadcast,
+        message: "#{state.name} is teleported to #{inspect(new_pos)}",
+        source: state.id
+      }, new_state.world_pid)
+    end
+    
+    {:noreply, new_state}
+  end
+
+  @impl true
+  def handle_info({:cancel, cancel_msg}, state) do
+    # Handle cancellation messages from anti-magic traps
+    # For now, just broadcast the effect
+    if state.world_pid do
+      Message.Broadcast.broadcast(%{
+        type: :broadcast,
+        message: "#{state.name} feels magic resistance!",
+        source: state.id
+      }, state.world_pid)
+    end
+    
+    {:noreply, state}
   end
 
   # Internal functions
@@ -367,6 +427,20 @@ defmodule Nexthack.Player do
           
         :slow ->
           %{state | slowed: true}
+          
+        :stuck ->
+          new_state = %{state | stuck: true}
+          
+          # Broadcast stuck
+          if new_state.world_pid do
+            Message.Broadcast.broadcast(%{
+              type: :broadcast,
+              message: "#{state.name} is stuck!",
+              source: state.id
+            }, new_state.world_pid)
+          end
+          
+          new_state
           
         :invisibility ->
           %{state | is_invisible: true}
