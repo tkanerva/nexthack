@@ -221,7 +221,7 @@ defmodule Nexthack.Zap do
       %{
         type: :status,
         effect: effect,
-        duration: state.duration > 0 ? state.duration : 10,
+        duration: if state.duration > 0, do: state.duration, else: 10,
         target_pid: entity_pid
       }
     })
