@@ -42,7 +42,7 @@ defmodule Nexthack.CLI do
     IO.puts("=" * 60)
     IO.puts()
     IO.puts("🗺️  Cave Map (80x24)")
-    IO.puts("   @ = Hero | M = Monster | # = Wall")
+    IO.puts("   @ = Hero | M = Monster | # = Wall | ^ = Trap")
     IO.puts()
     
     # Simple map representation
@@ -70,14 +70,14 @@ defmodule Nexthack.CLI do
     
     # Get user input
     case IO.gets("") do
-      "w\r\n" -> handle_move(player_pid, 0, -1)
-      "W\r\n" -> handle_move(player_pid, 0, -1)
-      "s\r\n" -> handle_move(player_pid, 0, 1)
-      "S\r\n" -> handle_move(player_pid, 0, 1)
-      "a\r\n" -> handle_move(player_pid, -1, 0)
-      "A\r\n" -> handle_move(player_pid, -1, 0)
-      "d\r\n" -> handle_move(player_pid, 1, 0)
-      "D\r\n" -> handle_move(player_pid, 1, 0)
+      "w\r\n" -> handle_move(player_pid, world_pid, 0, -1)
+      "W\r\n" -> handle_move(player_pid, world_pid, 0, -1)
+      "s\r\n" -> handle_move(player_pid, world_pid, 0, 1)
+      "S\r\n" -> handle_move(player_pid, world_pid, 0, 1)
+      "a\r\n" -> handle_move(player_pid, world_pid, -1, 0)
+      "A\r\n" -> handle_move(player_pid, world_pid, -1, 0)
+      "d\r\n" -> handle_move(player_pid, world_pid, 1, 0)
+      "D\r\n" -> handle_move(player_pid, world_pid, 1, 0)
       "q\r\n" -> handle_quit()
       "Q\r\n" -> handle_quit()
       _ -> :ok
@@ -111,7 +111,11 @@ defmodule Nexthack.CLI do
             if Enum.random([true, false, false, false, false]) && monsters_alive do
               "M"  # Monster
             else
-              " "  # Empty
+              if Enum.random([true, false, false, false, false, false, false, false]) do
+                "^"  # Trap
+              else
+                " "  # Empty
+              end
             end
           end
         end
@@ -122,8 +126,16 @@ defmodule Nexthack.CLI do
     Enum.each(map_lines, fn line -> IO.puts("   " <> line) end)
   end
 
-  defp handle_move(player_pid, dx, dy) do
+  defp handle_move(player_pid, world_pid, dx, dy) do
+    # Move the player
     Nexthack.Player.move(player_pid, dx, dy)
+    
+    # Get player's new position
+    player_pos = Nexthack.Player.get_position(player_pid)
+    
+    # Check for traps at the new position
+    Nexthack.World.check_traps_at_position(world_pid, player_pos, player_pid)
+    
     Process.sleep(200)
   end
 
