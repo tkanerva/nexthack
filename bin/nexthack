@@ -1,0 +1,10 @@
+#!/usr/bin/env elixir
+
+# Simple script to start the NextHack game
+
+# Add the project root to the path
+code_path = Mix.Project.build_path() || "_build/dev"
+Path.absn!(code_path) |> File.cp_r(Path.expand("../lib", __DIR__))
+
+# Start the game
+Nexthack.start()
