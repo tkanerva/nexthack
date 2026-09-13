@@ -8,7 +8,7 @@ NextHack is a conversion of the Python-based pyhack game to Elixir, leveraging E
 
 ### Key Features
 
-- **True Actor Model**: Every monster, player, and game entity runs as a separate Erlang process
+- **True Actor Model**: Every monster, player, trap, and spell runs as a separate Erlang process
 - **Message Passing**: All communication happens via Elixir's message passing
 - **Concurrent Game Loop**: Monsters move asynchronously
 - **Fault Tolerance**: Built on OTP principles for robustness
@@ -29,6 +29,7 @@ NextHack is a conversion of the Python-based pyhack game to Elixir, leveraging E
 - **Player Actor**: Single GenServer for player state and behavior
 - **Monster Actors**: Each monster is a separate GenServer process
 - **Trap Actors**: Each trap is a separate GenServer process
+- **Bolt Actors**: Each spell/attack is a separate GenServer process that moves across the map
 - **World Coordinator**: Manages game state and coordination
 - **Message Bus**: All communication via structured messages
 
@@ -37,13 +38,14 @@ NextHack is a conversion of the Python-based pyhack game to Elixir, leveraging E
 1. **`Nexthack.Monster`**: Base monster actor with concrete types (Goblin, Orc, Bat)
 2. **`Nexthack.Player`**: Player actor extending monster functionality
 3. **`Nexthack.Trap`**: Trap actor with 15 different trap types
-4. **`Nexthack.World`**: Game coordination and supervision tree
-5. **`Nexthack.CLI`**: Simple terminal-based interface
-6. **`Nexthack.Message`**: Message structures for inter-actor communication
+4. **`Nexthack.Zap`**: Spell/attack actor with moving bolt actors
+5. **`Nexthack.World`**: Game coordination and supervision tree
+6. **`Nexthack.CLI`**: Simple terminal-based interface
+7. **`Nexthack.Message`**: Message structures for inter-actor communication
 
 ## Current Features
 
-✅ **Actor-Based Architecture** - Every entity (player, monsters, traps) is a separate GenServer process
+✅ **Actor-Based Architecture** - Every entity (player, monsters, traps, spells) is a separate GenServer process
 
 ✅ **Monster Actors** - Goblin, Orc, and Bat monsters with independent behavior:
   - Random movement
@@ -65,6 +67,28 @@ NextHack is a conversion of the Python-based pyhack game to Elixir, leveraging E
   - **Trapdoor**: Falls to lower level
   - **Stairs Down/Up**: Ascend/descend levels
   - **Level Teleporter**: Random level change
+
+✅ **Zap/Spell System** - 14 different spell types with moving bolt actors:
+  - **Fire Bolt**: Travels 8 squares, deals fire damage
+  - **Lightning Bolt**: Travels 6 squares, deals lightning damage
+  - **Cone of Cold**: Travels 10 squares, deals cold damage
+  - **Death Ray**: Travels 8 squares, deals heavy death damage
+  - **Force Bolt**: Travels 12 squares, deals magic missile damage
+  - **Sleep**: Travels 8 squares, puts entities to sleep
+  - **Cancellation**: Travels 8 squares, cancels magic effects
+  - **Teleport**: Instantly teleports target entity
+  - **Invisibility**: Travels 8 squares, makes entity invisible
+  - **Polymorph**: Travels 8 squares, transforms entity
+  - **Slow**: Travels 8 squares, slows entity
+  - **Haste**: Travels 8 squares, hastes entity
+  - **Undead Turning**: Travels 8 squares, turns undead and deals damage
+
+✅ **Moving Bolt Actors** - Spells traverse the map:
+  - Bolts move in specified direction (N, S, E, W, diagonals)
+  - Check for collisions with entities at each step
+  - Apply effects when hitting entities
+  - Stop after reaching maximum range
+  - Multiple bolts can travel simultaneously
 
 ✅ **Message Passing** - All communication via Elixir's built-in messaging:
   - Attack messages with damage types
@@ -93,6 +117,7 @@ mix run -e "Nexthack.start"
 
 - **Movement**: Use WASD or arrow keys to move
 - **Traps**: Step on traps to trigger their effects
+- **Spells**: Cast spells that create moving bolt actors
 - **Objective**: Survive by defeating all monsters
 - **Game Over**: When player HP reaches 0 or all monsters are defeated
 
@@ -110,6 +135,20 @@ mix run -e "Nexthack.start"
    - Applies status effects with durations
    - Updates position for teleportation
    - Handles cancellation effects
+
+## How Zaps/Spells Work
+
+1. **Spell Creation**: Player casts a spell, creating a bolt actor
+2. **Bolt Initialization**: Bolt starts at caster's position with direction
+3. **Movement**: Bolt moves one square in specified direction
+4. **Collision Check**: At each position, bolt checks for entities
+5. **Effect Application**: If entities found, bolt applies appropriate effects:
+   - Damage messages for damaging spells
+   - Status effect messages for buff/debuff spells
+   - Teleport messages for teleport spells
+   - Cancel messages for cancellation spells
+6. **Range Limit**: Bolt stops after reaching maximum range
+7. **Completion**: Bolt terminates after reaching range or hitting target
 
 ## Development
 
@@ -138,7 +177,7 @@ Nexthack.start
 
 ## Architecture Benefits
 
-1. **Concurrency**: Monsters and traps operate independently
+1. **Concurrency**: Monsters, traps, and spells operate independently
 2. **Fault Isolation**: One actor crashing doesn't affect others
 3. **Scalability**: Easy to add more entities without performance impact
 4. **Maintainability**: Clear separation of concerns
@@ -149,7 +188,7 @@ Nexthack.start
 - **Process Lightweight**: Erlang processes are very lightweight (memory efficient)
 - **Message Passing**: Fast inter-process communication
 - **Scheduling**: Erlang's scheduler handles process concurrency
-- **Scaling**: Can easily handle hundreds of monster and trap processes
+- **Scaling**: Can easily handle hundreds of monster, trap, and spell processes simultaneously
 
 ## License
 
@@ -164,12 +203,12 @@ MIT License - see LICENSE file for details
 ## Future Enhancements
 
 1. **Items**: Add potions, weapons, and armor as separate actors
-2. **Spells**: Magic system with cooldowns and effects
-3. **Prayer**: Divine intervention system (from the original pray.py)
-4. **Better Rendering**: Full-screen terminal rendering with NCurses
-5. **Persistent State**: Save/load game functionality
-6. **Multiplayer**: Networked gameplay using Elixir's distributed features
-7. **More Monsters**: Expand monster variety and behaviors
-8. **Trap Disarmament**: Player can attempt to disarm traps
-9. **Trap Visibility**: Traps can be seen/revealed
-10. **Advanced AI**: Smarter monster behavior and tactics
+2. **Better Rendering**: Full-screen terminal rendering with NCurses
+3. **Persistent State**: Save/load game functionality
+4. **Multiplayer**: Networked gameplay using Elixir's distributed features
+5. **More Monsters**: Expand monster variety and behaviors
+6. **Trap Disarmament**: Player can attempt to disarm traps
+7. **Trap Visibility**: Traps can be seen/revealed
+8. **Advanced AI**: Smarter monster behavior and tactics
+9. **Wand System**: Wands with charge limits
+10. **Elemental Resistance**: More detailed resistance system
