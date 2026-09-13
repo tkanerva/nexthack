@@ -14,7 +14,7 @@ defmodule Nexthack.CLI do
     {:ok, _} = Nexthack.World.Supervisor.start_link([])
     
     # Create world and player
-    {:ok, world_pid, player_pid} = Nexthack.World.Supervisor.create_world()
+    {world_pid, player_pid} = Nexthack.World.Supervisor.create_world()
     
     # Start game
     Nexthack.World.start_game(world_pid)
@@ -156,7 +156,7 @@ defmodule Nexthack.CLI do
   defp clear_screen() do
     # Cross-platform screen clearing
     case :os.type() do
-      {:win32, _} -> System.cmd("cmd",/"/c cls")
+      {:win32, _} -> System.cmd("cmd", ["/c", "cls"])
       _ -> System.cmd("clear", [""])
     end
   end
