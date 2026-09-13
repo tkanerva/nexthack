@@ -280,8 +280,8 @@ defmodule Nexthack.Player do
     if state.is_sleeping or not state.alive do
       state
     else
-      new_x = state.pos |> elem(0) + dx
-      new_y = state.pos |> elem(1) + dy
+      {x, y} = state.pos
+      {new_x, new_y} = {x + dx, y + dy}
       
       # Simple validation - in future would check world map
       if new_x >= 0 and new_x < 80 and new_y >= 0 and new_y < 24 do
