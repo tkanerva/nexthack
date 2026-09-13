@@ -179,11 +179,8 @@ defmodule Nexthack.Monster do
         new_state = %{new_state | is_sleeping: false}
         # Broadcast that monster woke up
         if new_state.world_pid do
-          Message.Broadcast.broadcast(%{
-            type: :broadcast,
-            message: "#{state.name} wakes up!",
-            source: state.id
-          }, new_state.world_pid)
+          send(new_state.world_pid, {:broadcast, 
+            "#{state.name} wakes up!", state.id})
         end
       end
       {:noreply, new_state}
@@ -192,6 +189,54 @@ defmodule Nexthack.Monster do
       Process.send_after(self(), {:wake_up_check}, 100)
       {:noreply, state}
     end
+  end
+
+  @impl true
+  def handle_info({:attack, attack_msg}, state) do
+    # Handle attack messages from traps
+    damage_type = attack_msg.damage_type
+    power = attack_msg.power
+    
+    new_state = react_to_damage(state, damage_type, power)
+    {:noreply, new_state}
+  end
+
+  @impl true
+  def handle_info({:status_effect, status_msg}, state) do
+    # Handle status effect messages from traps
+    effect = status_msg.effect
+    duration = status_msg.duration
+    
+    new_state = apply_status_effect(state, effect, duration)
+    {:noreply, new_state}
+  end
+
+  @impl true
+  def handle_info({:teleport, teleport_msg}, state) do
+    # Handle teleportation messages from traps
+    new_pos = teleport_msg.new_pos
+    
+    new_state = %{state | pos: new_pos}
+    
+    # Broadcast teleport
+    if new_state.world_pid do
+      send(new_state.world_pid, {:broadcast, 
+        "#{state.name} is teleported to #{inspect(new_pos)}", state.id})
+    end
+    
+    {:noreply, new_state}
+  end
+
+  @impl true
+  def handle_info({:cancel, cancel_msg}, state) do
+    # Handle cancellation messages from anti-magic traps
+    # For now, just broadcast the effect
+    if state.world_pid do
+      send(state.world_pid, {:broadcast, 
+        "#{state.name} feels magic resistance!", state.id})
+    end
+    
+    {:noreply, state}
   end
 
   # Internal functions
@@ -213,11 +258,8 @@ defmodule Nexthack.Monster do
           
           # Broadcast move
           if new_state.world_pid do
-            Message.Broadcast.broadcast(%{
-              type: :broadcast,
-              message: "#{state.name} moves to #{inspect(new_pos)}",
-              source: state.id
-            }, new_state.world_pid)
+            send(new_state.world_pid, {:broadcast, 
+              "#{state.name} moves to #{inspect(new_pos)}", state.id})
           end
           
           new_state
@@ -249,20 +291,14 @@ defmodule Nexthack.Monster do
       if damage > 0 do
         # Broadcast attack
         if state.world_pid do
-          Message.Broadcast.broadcast(%{
-            type: :broadcast,
-            message: "#{state.name} hits #{target_pid} for #{damage} damage!",
-            source: state.id
-          }, state.world_pid)
+          send(state.world_pid, {:broadcast, 
+            "#{state.name} hits #{target_pid} for #{damage} damage!", state.id})
         end
       else
         # Broadcast miss
         if state.world_pid do
-          Message.Broadcast.broadcast(%{
-            type: :broadcast,
-            message: "#{state.name} misses #{target_pid}.",
-            source: state.id
-          }, state.world_pid)
+          send(state.world_pid, {:broadcast, 
+            "#{state.name} misses #{target_pid}.", state.id})
         end
       end
       
@@ -297,21 +333,14 @@ defmodule Nexthack.Monster do
       
       # Broadcast damage
       if new_state.world_pid do
-        Message.Broadcast.broadcast(%{
-          type: :broadcast,
-          message: message,
-          source: state.id
-        }, new_state.world_pid)
+        send(new_state.world_pid, {:broadcast, message, state.id})
       end
       
       if not new_state.alive do
         # Broadcast death
         if new_state.world_pid do
-          Message.Broadcast.broadcast(%{
-            type: :broadcast,
-            message: "#{state.name} dies!",
-            source: state.id
-          }, new_state.world_pid)
+          send(new_state.world_pid, {:broadcast, 
+            "#{state.name} dies!", state.id})
         end
       end
       
@@ -329,11 +358,8 @@ defmodule Nexthack.Monster do
           
           # Broadcast sleep
           if new_state.world_pid do
-            Message.Broadcast.broadcast(%{
-              type: :broadcast,
-              message: "#{state.name} falls asleep!",
-              source: state.id
-            }, new_state.world_pid)
+            send(new_state.world_pid, {:broadcast, 
+              "#{state.name} falls asleep!", state.id})
           end
           
           new_state
@@ -346,6 +372,17 @@ defmodule Nexthack.Monster do
           
         :invisibility ->
           %{state | is_invisible: true}
+          
+        :stuck ->
+          new_state = %{state | stuck: true}
+          
+          # Broadcast stuck
+          if new_state.world_pid do
+            send(new_state.world_pid, {:broadcast, 
+              "#{state.name} is stuck!", state.id})
+          end
+          
+          new_state
           
         _ -> state
       end
