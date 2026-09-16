@@ -2,11 +2,19 @@ defmodule Nexthack.Player do
   @moduledoc """
   Player actor implementation.
   Extends the monster base with player-specific functionality.
+
+  The player owns an `Nexthack.Inventory` actor (started together
+  with it) which holds its items, gold and equipment -- the same
+  way NetHack's hero owns the `gi.invent` list. Pick-up, drop,
+  equipment and the item actions menu (iactions.c) are all routed
+  through that inventory actor.
   """
   
   use GenServer
   alias Nexthack.Message
   alias Nexthack.DamageType
+  alias Nexthack.Object
+  alias Nexthack.Inventory
 
   # Player state
   defstruct [
@@ -24,7 +32,7 @@ defmodule Nexthack.Player do
     is_demon: false,
     is_golem: false,
     is_nonliving: false,
-    inventory: [],
+    inventory_pid: nil,
     world_pid: nil,
     last_messages: [],
     # Player-specific states
@@ -107,6 +115,55 @@ defmodule Nexthack.Player do
     GenServer.cast(pid, {:check_and_trigger_traps, self()})
   end
 
+  # --- inventory API (the item system) ---------------------------------
+
+  @doc "The inventory actor of the player."
+  def inventory(pid) do
+    GenServer.call(pid, :inventory)
+  end
+
+  @doc "Display lines of the inventory (invent())."
+  def list_inventory(pid) do
+    GenServer.call(pid, :list_inventory)
+  end
+
+  @doc "Give the player an item (e.g. starting equipment)."
+  def give_item(pid, item) do
+    GenServer.call(pid, {:give_item, item})
+  end
+
+  @doc "Add gold to the player's purse."
+  def add_gold(pid, amount) do
+    GenServer.call(pid, {:add_gold, amount})
+  end
+
+  @doc """
+  Pick up the top item from the floor pile at the player's
+  position (pick_obj()). Returns :ok or {:error, reason}.
+  """
+  def pick_up_here(pid) do
+    GenServer.call(pid, :pick_up_here)
+  end
+
+  @doc "Drop the item at inventory letter `invlet` at the player's position."
+  def drop_item(pid, invlet) do
+    GenServer.call(pid, {:drop_item, invlet})
+  end
+
+  @doc "The item actions (iactions.c menu) available for the item at `invlet`."
+  def item_actions(pid, invlet) do
+    GenServer.call(pid, {:item_actions, invlet})
+  end
+
+  @doc """
+  Perform an item action (drop, quaff, read, wield, wear, ...) on
+  the item at `invlet`. Returns :ok, {:not_implemented, text} or
+  {:error, reason}.
+  """
+  def perform_action(pid, invlet, action, opts \\ []) do
+    GenServer.call(pid, {:perform_action, invlet, action, opts})
+  end
+
   # Monster protocol functions (like Python's MonsterProtocol)
 
   @doc """
@@ -133,8 +190,15 @@ defmodule Nexthack.Player do
 
   @impl true
   def init(initial_state) do
+    # the player's pack: one inventory actor per carrier
+    {:ok, inv_pid} =
+      Inventory.start_link(self(),
+        carrier_id: initial_state.id,
+        world_pid: initial_state.world_pid
+      )
+
     Process.send_after(self(), {:wake_up_check}, 100)
-    {:ok, initial_state}
+    {:ok, %{initial_state | inventory_pid: inv_pid}}
   end
 
   @impl true
@@ -197,6 +261,109 @@ defmodule Nexthack.Player do
   end
 
   @impl true
+  def handle_call(:inventory, _from, state) do
+    {:reply, state.inventory_pid, state}
+  end
+
+  @impl true
+  def handle_call(:list_inventory, _from, state) do
+    {:reply, Inventory.list(state.inventory_pid), state}
+  end
+
+  @impl true
+  def handle_call({:give_item, item}, _from, state) do
+    case Inventory.pick_up(state.inventory_pid, item) do
+      {:ok, _} ->
+        broadcast(state, "You receive #{Object.describe(Object.state(item))}.")
+        {:reply, :ok, state}
+      {:merged, _} ->
+        broadcast(state, "You receive an item (stacked with a similar one).")
+        {:reply, :ok, state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:add_gold, amount}, _from, state) do
+    case Inventory.add_gold(state.inventory_pid, amount) do
+      {:ok, total} ->
+        broadcast(state, "You now carry #{total} gold pieces.")
+        {:reply, total, state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call(:pick_up_here, _from, state) do
+    if is_nil(state.world_pid) do
+      {:reply, {:error, :no_world}, state}
+    else
+      case GenServer.call(state.world_pid, {:take_top_item_at, state.pos, self()}) do
+        {:ok, item} ->
+          case Inventory.pick_up(state.inventory_pid, item) do
+            {:ok, _} ->
+              broadcast(state, "You pick up #{Object.describe(Object.state(item))}.")
+              {:reply, :ok, state}
+            {:merged, _} ->
+              broadcast(state, "You pick up an item (stacked with a similar one).")
+              {:reply, :ok, state}
+            {:error, reason} ->
+              # put it back where it was
+              Object.set_pos(item, state.pos)
+              Object.set_where(item, :floor)
+              Object.clear_holder(item)
+              send(state.world_pid, {:drop_floor_item, state.pos, item, self()})
+              {:reply, {:error, reason}, state}
+          end
+        :nothing ->
+          {:reply, {:error, :nothing_here}, state}
+      end
+    end
+  end
+
+  @impl true
+  def handle_call({:drop_item, invlet}, _from, state) do
+    case Inventory.drop(state.inventory_pid, [invlet], state.pos) do
+      {:ok, [_letter, item]} ->
+        broadcast(state, "You drop #{Object.describe(Object.state(item))}.")
+        {:reply, :ok, state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:item_actions, invlet}, _from, state) do
+    case inventory_item(state, invlet) do
+      {:ok, item} ->
+        actions = Nexthack.ItemAction.actions_for(item, action_context(state))
+        {:reply, actions, state}
+      err ->
+        {:reply, err, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:perform_action, invlet, action, opts}, _from, state) do
+    ctx = action_context(state)
+    ctx = Map.put(ctx, :pos, state.pos)
+    ctx = Map.merge(ctx, Map.new(opts))
+
+    case Nexthack.ItemAction.execute(state.inventory_pid, invlet, action, ctx) do
+      {:ok, message} ->
+        broadcast(state, message)
+        {:reply, :ok, state}
+      {:not_implemented, what} ->
+        broadcast(state, what)
+        {:reply, {:not_implemented, what}, state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
   def handle_info({:wake_up_check}, state) do
     if state.is_sleeping and state.sleep_duration > 0 do
       new_duration = state.sleep_duration - 1
@@ -204,13 +371,7 @@ defmodule Nexthack.Player do
       if new_duration <= 0 do
         new_state = %{new_state | is_sleeping: false}
         # Broadcast that player woke up
-        if new_state.world_pid do
-          Message.Broadcast.broadcast(%{
-            type: :broadcast,
-            message: "#{state.name} wakes up!",
-            source: state.id
-          }, new_state.world_pid)
-        end
+        broadcast(new_state, "#{new_state.name} wakes up!")
       end
       {:noreply, new_state}
     else
@@ -248,14 +409,7 @@ defmodule Nexthack.Player do
     new_state = %{state | pos: new_pos}
     
     # Broadcast teleport
-    if new_state.world_pid do
-      Message.Broadcast.broadcast(%{
-        type: :broadcast,
-        message: "#{state.name} is teleported to #{inspect(new_pos)}",
-        source: state.id
-      }, new_state.world_pid)
-    end
-    
+    broadcast(new_state, "#{state.name} is teleported to #{inspect(new_pos)}")
     {:noreply, new_state}
   end
 
@@ -263,18 +417,42 @@ defmodule Nexthack.Player do
   def handle_info({:cancel, cancel_msg}, state) do
     # Handle cancellation messages from anti-magic traps
     # For now, just broadcast the effect
-    if state.world_pid do
-      Message.Broadcast.broadcast(%{
-        type: :broadcast,
-        message: "#{state.name} feels magic resistance!",
-        source: state.id
-      }, state.world_pid)
-    end
-    
+    broadcast(state, "#{state.name} feels magic resistance!")
     {:noreply, state}
   end
 
   # Internal functions
+
+  defp broadcast(state, message) do
+    if state.world_pid do
+      Message.Broadcast.broadcast(%{
+        type: :broadcast,
+        message: message,
+        source: state.id
+      }, state.world_pid)
+    end
+  end
+
+  # the situation facts itemactions() needs (uwep, uswapwep, ...)
+  defp action_context(state) do
+    worn = Inventory.worn(state.inventory_pid)
+    %{
+      wielded: Map.get(worn, :weapon),
+      swap_weapon: Map.get(worn, :swap_weapon),
+      quiver: Map.get(worn, :quiver),
+      twoweap: false,
+      at_altar: false,
+      in_shop: false,
+      unpaid: false
+    }
+  end
+
+  defp inventory_item(state, invlet) do
+    case List.keyfind(Inventory.items(state.inventory_pid), invlet, 0) do
+      {^invlet, item} -> {:ok, item}
+      nil -> {:error, :not_in_inventory}
+    end
+  end
 
   defp move_player(state, dx, dy) do
     if state.is_sleeping or not state.alive do
@@ -289,14 +467,7 @@ defmodule Nexthack.Player do
         new_state = %{state | pos: new_pos}
         
         # Broadcast move
-        if new_state.world_pid do
-          Message.Broadcast.broadcast(%{
-            type: :broadcast,
-            message: "#{state.name} moves to #{inspect(new_pos)}",
-            source: state.id
-          }, new_state.world_pid)
-        end
-        
+        broadcast(new_state, "#{state.name} moves to #{inspect(new_pos)}")
         new_state
       else
         state
@@ -318,22 +489,10 @@ defmodule Nexthack.Player do
       
       if damage > 0 do
         # Broadcast attack
-        if state.world_pid do
-          Message.Broadcast.broadcast(%{
-            type: :broadcast,
-            message: "#{state.name} hits #{target_pid} for #{damage} damage!",
-            source: state.id
-          }, state.world_pid)
-        end
+        broadcast(state, "#{state.name} hits #{inspect(target_pid)} for #{damage} damage!")
       else
         # Broadcast miss
-        if state.world_pid do
-          Message.Broadcast.broadcast(%{
-            type: :broadcast,
-            message: "#{state.name} misses #{target_pid}.",
-            source: state.id
-          }, state.world_pid)
-        end
+        broadcast(state, "#{state.name} misses #{inspect(target_pid)}.")
       end
       
       state
@@ -366,23 +525,11 @@ defmodule Nexthack.Player do
       }
       
       # Broadcast damage
-      if new_state.world_pid do
-        Message.Broadcast.broadcast(%{
-          type: :broadcast,
-          message: message,
-          source: state.id
-        }, new_state.world_pid)
-      end
+      broadcast(new_state, message)
       
       if not new_state.alive do
         # Broadcast death
-        if new_state.world_pid do
-          Message.Broadcast.broadcast(%{
-            type: :broadcast,
-            message: "#{state.name} dies!",
-            source: state.id
-          }, new_state.world_pid)
-        end
+        broadcast(new_state, "#{state.name} dies!")
       end
       
       new_state
@@ -398,28 +545,14 @@ defmodule Nexthack.Player do
           new_state = %{state | is_sleeping: true, sleep_duration: duration}
           
           # Broadcast sleep
-          if new_state.world_pid do
-            Message.Broadcast.broadcast(%{
-              type: :broadcast,
-              message: "#{state.name} falls asleep!",
-              source: state.id
-            }, new_state.world_pid)
-          end
-          
+          broadcast(new_state, "#{state.name} falls asleep!")
           new_state
           
         :poison ->
           new_state = %{state | poisoned: true, poison_duration: duration}
           
           # Broadcast poison
-          if new_state.world_pid do
-            Message.Broadcast.broadcast(%{
-              type: :broadcast,
-              message: "#{state.name} is poisoned!",
-              source: state.id
-            }, new_state.world_pid)
-          end
-          
+          broadcast(new_state, "#{state.name} is poisoned!")
           new_state
           
         :confused ->
@@ -432,14 +565,7 @@ defmodule Nexthack.Player do
           new_state = %{state | stuck: true}
           
           # Broadcast stuck
-          if new_state.world_pid do
-            Message.Broadcast.broadcast(%{
-              type: :broadcast,
-              message: "#{state.name} is stuck!",
-              source: state.id
-            }, new_state.world_pid)
-          end
-          
+          broadcast(new_state, "#{state.name} is stuck!")
           new_state
           
         :invisibility ->

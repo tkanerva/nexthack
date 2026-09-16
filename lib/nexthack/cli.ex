@@ -63,8 +63,8 @@ defmodule Nexthack.CLI do
     
     IO.puts()
     IO.puts("🎯 Controls:")
-    IO.puts("   WASD/Arrows to move | Q to quit")
-    IO.puts("   (Monsters move automatically)")
+    IO.puts("   WASD/Arrows to move | i nventory | p ick up | d rop | a ctions")
+    IO.puts("   (Monsters move automatically) | q to quit")
     IO.puts()
     IO.puts("   Move: ", end: "")
     
@@ -80,6 +80,12 @@ defmodule Nexthack.CLI do
       "D\r\n" -> handle_move(player_pid, world_pid, 1, 0)
       "q\r\n" -> handle_quit()
       "Q\r\n" -> handle_quit()
+      "i\r\n" -> handle_inventory(player_pid)
+      "I\r\n" -> handle_inventory(player_pid)
+      "p\r\n" -> handle_pickup(player_pid)
+      "P\r\n" -> handle_pickup(player_pid)
+      "x\r\n" -> handle_item_actions(player_pid)
+      "X\r\n" -> handle_item_actions(player_pid)
       _ -> :ok
     end
     
@@ -137,6 +143,101 @@ defmodule Nexthack.CLI do
     Nexthack.World.check_traps_at_position(world_pid, player_pos, player_pid)
     
     Process.sleep(200)
+  end
+
+  # --- item system commands ------------------------------------------------
+
+  defp handle_inventory(player_pid) do
+    IO.puts()
+    IO.puts("🎒 Your inventory:")
+    IO.puts(String.duplicate("-", 40))
+    
+    case Nexthack.Player.list_inventory(player_pid) do
+      [] ->
+        IO.puts("   (empty - press 'p' to pick up items)")
+      lines ->
+        Enum.each(lines, fn line -> IO.puts("   #{line}") end)
+    end
+    
+    IO.puts(String.duplicate("-", 40))
+    IO.puts()
+    IO.puts("   (x) show actions for an item | (p)ick up | Enter to return: ", end: "")
+    handle_sub_command(player_pid, IO.gets(""))
+  end
+
+  defp handle_sub_command(player_pid, input) do
+    case input do
+      "x\r\n" -> handle_item_actions(player_pid)
+      "X\r\n" -> handle_item_actions(player_pid)
+      "p\r\n" -> handle_pickup(player_pid)
+      "P\r\n" -> handle_pickup(player_pid)
+      _ -> :ok
+    end
+  end
+
+  defp handle_pickup(player_pid) do
+    case Nexthack.Player.pick_up_here(player_pid) do
+      :ok ->
+        :ok
+      {:error, :nothing_here} ->
+        IO.puts("   There is nothing here to pick up.")
+      {:error, reason} ->
+        IO.puts("   Can't pick up (#{inspect(reason)}).")
+    end
+  end
+
+  defp handle_item_actions(player_pid) do
+    IO.puts()
+    IO.puts("   Show actions for which item? (letter, or Enter to cancel): ", end: "")
+    
+    case IO.gets("") do
+      letter when is_binary(letter) ->
+        invlet = first_char(letter)
+        
+        if invlet do
+          case Nexthack.Player.item_actions(player_pid, invlet) do
+            {:error, reason} ->
+              IO.puts("   Unknown item (#{inspect(reason)}).")
+            
+            actions when is_list(actions) ->
+              Enum.each(actions, fn %Nexthack.ItemAction{letter: l, action: act, text: text} ->
+                IO.puts("   #{<<l>>}: #{text}  (#{act})")
+              end)
+              
+              IO.puts()
+              IO.puts("   Perform which action? (letter, or Enter to cancel): ", end: "")
+              
+              case IO.gets("") do
+                choice when is_binary(choice) ->
+                  action_letter = first_char(choice)
+                  
+                  if action_letter do
+                    action =
+                      Enum.find(actions, fn a -> a.letter == action_letter end)
+                    
+                    if action do
+                      case Nexthack.Player.perform_action(player_pid, invlet, action.action) do
+                        :ok -> :ok
+                        {:not_implemented, what} -> IO.puts("   #{what}")
+                        {:error, reason} -> IO.puts("   Can't (#{inspect(reason)}).")
+                      end
+                    else
+                      IO.puts("   No such action.")
+                    end
+                  end
+                _ -> :ok
+              end
+          end
+        end
+      _ -> :ok
+    end
+  end
+
+  defp first_char(input) do
+    input
+    |> String.trim()
+    |> String.to_charlist()
+    |> List.first()
   end
 
   defp handle_quit() do

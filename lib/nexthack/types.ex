@@ -77,6 +77,67 @@ defmodule Nexthack.Message do
     defstruct type: :inventory, action: :add, item_id: "", to: nil, from: nil
   end
 
+  # Item lifecycle messages (the item system, see lib/nexthack/object.ex)
+  defmodule ItemSpawned do
+    @type t :: %__MODULE__{
+      type: :item_spawned,
+      item_pid: pid() | nil,
+      otype: atom(),
+      pos: Nexthack.Position.t(),
+      source: Nexthack.EntityID.t()
+    }
+    defstruct type: :item_spawned, item_pid: nil, otype: nil, pos: {0, 0}, source: ""
+  end
+
+  defmodule ItemPickedUp do
+    @type t :: %__MODULE__{
+      type: :item_picked_up,
+      item_pid: pid() | nil,
+      carrier: Nexthack.EntityID.t(),
+      pos: Nexthack.Position.t()
+    }
+    defstruct type: :item_picked_up, item_pid: nil, carrier: "", pos: {0, 0}
+  end
+
+  defmodule ItemDropped do
+    @type t :: %__MODULE__{
+      type: :item_dropped,
+      item_pid: pid() | nil,
+      pos: Nexthack.Position.t(),
+      source: Nexthack.EntityID.t()
+    }
+    defstruct type: :item_dropped, item_pid: nil, pos: {0, 0}, source: ""
+  end
+
+  defmodule ItemConsumed do
+    @type t :: %__MODULE__{
+      type: :item_consumed,
+      item_id: Nexthack.EntityID.t(),
+      carrier: Nexthack.EntityID.t()
+    }
+    defstruct type: :item_consumed, item_id: "", carrier: ""
+  end
+
+  defmodule ItemEquipped do
+    @type t :: %__MODULE__{
+      type: :item_equipped,
+      item_pid: pid() | nil,
+      slot: atom(),
+      carrier: Nexthack.EntityID.t()
+    }
+    defstruct type: :item_equipped, item_pid: nil, slot: :weapon, carrier: ""
+  end
+
+  defmodule ItemUnequipped do
+    @type t :: %__MODULE__{
+      type: :item_unequipped,
+      item_pid: pid() | nil,
+      slot: atom() | nil,
+      carrier: Nexthack.EntityID.t()
+    }
+    defstruct type: :item_unequipped, item_pid: nil, slot: nil, carrier: ""
+  end
+
   # Query message
   defmodule Query do
     @type t :: %__MODULE__{ 
@@ -127,4 +188,14 @@ defmodule Nexthack.Message do
     }
     defstruct type: :broadcast, message: "", source: ""
   end
+
+  @doc """
+  Send a broadcast log message to the world actor. This is the
+  message-bus primitive the actors use for player-visible events.
+  """
+  def broadcast(%Broadcast{} = msg, world_pid) when is_pid(world_pid) do
+    send(world_pid, {:broadcast, msg.message, msg.source})
+  end
+
+  def broadcast(%Broadcast{} = _msg, _world_pid), do: :ok
 end

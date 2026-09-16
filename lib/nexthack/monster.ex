@@ -2,11 +2,18 @@ defmodule Nexthack.Monster do
   @moduledoc """
   Base monster actor implementation.
   Each monster runs as a separate GenServer process.
+
+  Every monster owns an `Nexthack.Inventory` actor (the equivalent
+  of NetHack's `mon->minvent` list): loot is carried by the monster,
+  and when the monster dies its belongings are dropped on the floor
+  where it fell.
   """
   
   use GenServer
   alias Nexthack.Message
   alias Nexthack.DamageType
+  alias Nexthack.Object
+  alias Nexthack.Inventory
 
   # Monster state
   defstruct [
@@ -26,7 +33,8 @@ defmodule Nexthack.Monster do
     is_demon: false,
     is_golem: false,
     is_nonliving: false,
-    inventory: [],
+    is_flying: false,
+    inventory_pid: nil,
     world_pid: nil,
     last_messages: []
   ]
@@ -96,6 +104,23 @@ defmodule Nexthack.Monster do
     GenServer.call(pid, :get_name)
   end
 
+  # --- inventory API (minvent) -----------------------------------------
+
+  @doc "The inventory actor of the monster."
+  def inventory(pid) do
+    GenServer.call(pid, :inventory)
+  end
+
+  @doc "Give the monster an item (it picks it up)."
+  def give_item(pid, item) do
+    GenServer.call(pid, {:give_item, item})
+  end
+
+  @doc "All items the monster carries, as `[{invlet, item_pid}, ...]`."
+  def loot(pid) do
+    GenServer.call(pid, :loot)
+  end
+
   # Monster protocols (like Python's MonsterProtocol)
 
   @doc """
@@ -122,8 +147,15 @@ defmodule Nexthack.Monster do
 
   @impl true
   def init(initial_state) do
+    # every monster carries its own minvent
+    {:ok, inv_pid} =
+      Inventory.start_link(self(),
+        carrier_id: initial_state.id,
+        world_pid: initial_state.world_pid
+      )
+
     Process.send_after(self(), {:wake_up_check}, 100)
-    {:ok, initial_state}
+    {:ok, %{initial_state | inventory_pid: inv_pid}}
   end
 
   @impl true
@@ -168,6 +200,25 @@ defmodule Nexthack.Monster do
   @impl true
   def handle_call(:get_name, _from, state) do
     {:reply, state.name, state}
+  end
+
+  @impl true
+  def handle_call(:inventory, _from, state) do
+    {:reply, state.inventory_pid, state}
+  end
+
+  @impl true
+  def handle_call({:give_item, item}, _from, state) do
+    case Inventory.pick_up(state.inventory_pid, item) do
+      {:ok, _} -> {:reply, :ok, state}
+      {:merged, _} -> {:reply, :ok, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call(:loot, _from, state) do
+    {:reply, Inventory.items(state.inventory_pid), state}
   end
 
   @impl true
@@ -341,6 +392,9 @@ defmodule Nexthack.Monster do
       end
       
       if not new_state.alive do
+        # A dead monster drops everything it was carrying (minvent)
+        drop_inventory(new_state)
+        
         # Broadcast death
         if new_state.world_pid do
           send(new_state.world_pid, {:broadcast, 
@@ -349,6 +403,29 @@ defmodule Nexthack.Monster do
       end
       
       new_state
+    end
+  end
+
+  # Drop the monster's whole inventory on the floor where it died
+  defp drop_inventory(state) do
+    if state.inventory_pid and state.world_pid do
+      items = Inventory.items(state.inventory_pid)
+
+      if items == [] do
+        :ok
+      else
+        Enum.each(items, fn {_invlet, item} ->
+          if Object.alive?(item) do
+            Object.clear_holder(item)
+            Object.set_where(item, :floor)
+            Object.set_pos(item, state.pos)
+            send(state.world_pid, {:drop_floor_item, state.pos, item, self()})
+          end
+        end)
+
+        send(state.world_pid, {:broadcast,
+          "#{state.name} drops its belongings.", state.id})
+      end
     end
   end
 
